@@ -1,0 +1,9 @@
+command: [
+  "flask",
+  "--app",
+  "app.py",
+  "run"
+]
+env:
+  - name: 'api_key'
+    value: '-3'

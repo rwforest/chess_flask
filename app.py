@@ -33,66 +33,31 @@ flask_app = Flask(__name__, static_folder=STATIC_FOLDER_PATH)
 
 CORS(flask_app, origins=["http://localhost:3000"])
 
-
 # Define the route for the root URL
-@flask_app.route('/best_move')
-# Apply MLflow tracing decorator
-# Ensure mlflow and SpanType are imported and configured correctly in your environment
-@mlflow.trace(span_type=SpanType.CHAIN)
-# Flask route handlers take no arguments by default;
-# input must be accessed via the request object
-def get_raw_response():
-    # Get board_state and history from query parameters
-    # Example usage: /?board_state=rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1&history=
-    board_state = request.args.get('board_state')
-    pgn = request.args.get('pgn')
+@flask_app.route('/api/best_move', methods=['POST'])
+def get_move():
+    fen = request.args.get('fen', '8/1P1R4/n1r2B2/3Pp3/1k4P1/6K1/Bppr1P2/2q5 w - - 0 1')
+    pgn = request.args.get('pgn', "")
+
+    # fen = '8/1P1R4/n1r2B2/3Pp3/1k4P1/6K1/Bppr1P2/2q5 w - - 0 1'
+    # pgn = ""
+
+    legal_moves = list(chess.Board(fen).legal_moves)  # This gives a list of Move objects
+    legal_moves_str = [move.uci() for move in legal_moves]
+
+    board_state = fen
 
     # Basic input validation
     if not board_state:
         return "Error: 'board_state' query parameter is required.", 400
 
     # Construct the prompt for the AI model
-    prompt = f"""
-        You are a chess grandmaster. Given the current state of the chess board:
-        {board_state}
-        Generate the next move and explain your reasoning concisely.
-        The move should be in a <move> tag, but don't include this tag anywhere in the thinking.
-        Your response should contain extract one <move>move</move> tag, which contains a valid chess move.
-
-        Persona: You are an expert chess commentator with a deep understanding of the game at all levels, from amateur play to Grandmaster tournaments. You are enthusiastic, engaging, and able to explain complex concepts in a clear and accessible way for a broad audience. Your commentary should be informative, entertaining, and capture the drama and excitement of a chess game.
-
-        Key Responsibilities:
-        - Analyze the Game: Provide real-time analysis of the game as it progresses. Explain the strategic and tactical ideas behind each move.
-        - Evaluate Positions: Assess the current state of the board, highlighting advantages, disadvantages, and key imbalances (e.g., material, space, pawn structure, piece activity).
-        - Predict Future Moves/Plans: Offer insights into potential continuations and likely plans for both players. Discuss alternative moves and their implications.
-        - Explain Concepts: Define and explain chess terms, openings, endgames, and common tactical motifs as they appear in the game. Tailor explanations to the audience's assumed level of understanding.
-        - Highlight Critical Moments: Identify turning points, blunders, brilliant moves, and moments of high tension.
-        - Discuss Player Psychology: Comment on potential psychological factors influencing the players' decisions (e.g., time pressure, confidence, risk tolerance).
-        - Provide Context: Briefly mention relevant historical games, opening theory, or player statistics if they add value to the commentary.
-        - Maintain Engagement: Use varied language, rhetorical questions, and enthusiastic tone to keep the audience interested.
-        - Adapt to Game Pace: Adjust the depth and speed of commentary based on the game's tempo (e.g., more detailed analysis during slow positions, quicker reactions during sharp tactical sequences).
-        - Remain Objective: While you can express excitement or disappointment about moves, maintain an objective stance in your analysis.
-
-        Style and Tone:
-        - Enthusiastic and Passionate: Convey a genuine love for chess.
-        - Clear and Concise: Avoid overly technical jargon unless explained.
-        - Engaging and Dynamic: Keep the commentary lively.
-        - Informative: Educate the audience about the nuances of the game.
-        - Accessible: Speak to both experienced players and newcomers.
-        - Slightly Conversational: Use natural language, as if speaking directly to an audience.
-
-        Constraints:
-        - Focus only on the chess game provided. Do not discuss unrelated topics.
-        - Avoid making definitive judgments about players' overall skill based on a single game unless specifically instructed.
-        - Do not generate moves yourself unless asked to suggest alternatives or analyze variations.
-        - If the game state is unclear or invalid, request clarification.
-
-        Input: PGN: {pgn}, fen: {board_state}
-
-        Output: 
-        Include the next move in a <move>move</move< tag as requested initially.
-        Generate running commentary in natural language, formatted for easy reading (e.g., paragraphs, possibly with timestamps if the input includes them).
-        """
+    prompt =  f"""You are a chess grandmaster. Given the current state of the chess board:
+    {board_state}
+    Legal moves: {legal_moves_str}
+    Generate the next move and explain your reasoning concisely.
+    The move should be in a <move> tag
+    Make sure you only output one <move>move</move> in the response"""
 
     # Retry loop for generating the move
     max_retries = 3
@@ -103,7 +68,7 @@ def get_raw_response():
         try:
             # Call the OpenAI API to get the chat completion
             response = client.chat.completions.create(
-                model="agents_unitygo-lichess-chessmate",
+                model="databricks-claude-sonnet-4",
                 messages=[
                     {
                         "role": "user",
@@ -112,14 +77,9 @@ def get_raw_response():
                 ]
             )
 
-            # Access the content correctly from the response object
-            last_assistant_message = next(
-                (msg['content'] for msg in reversed(response.messages) if msg.get("role") == "assistant"),
-                None
-            )
-
+            print(response.choices[0].message.content)
             # Extract the move from the response content
-            generated_move = extract_move(last_assistant_message)
+            generated_move = extract_move(response.choices[0].message.content)
 
             # If a move was successfully extracted, break the loop
             if generated_move:
